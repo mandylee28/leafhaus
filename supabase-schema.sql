@@ -31,7 +31,7 @@ create table if not exists vouchers (
 create table if not exists orders (
   id uuid primary key default gen_random_uuid(),
   order_number text not null,
-  pickup_number text not null,
+  pickup_number text not null unique,
   store text not null,
   subtotal numeric(10, 2) not null,
   discount numeric(10, 2) not null default 0,
@@ -53,6 +53,46 @@ create table if not exists order_items (
   qty int not null,
   unit_price numeric(10, 2) not null
 );
+
+-- The live table was created before pickup_number was unique, and
+-- `create table if not exists` never adds a missing constraint.
+-- Pickup numbers must be unique: two orders placed at the same moment
+-- both count the same number of rows and would otherwise get the same
+-- pickup number. saveOrder() in the mobile app relies on this
+-- constraint — a duplicate insert fails with Postgres 23505 and it
+-- retries with the next number (up to 3 attempts). There is no
+-- ADD CONSTRAINT IF NOT EXISTS in Postgres, so guard with a DO block.
+do $$
+begin
+  alter table public.orders add constraint orders_pickup_number_key unique (pickup_number);
+exception when duplicate_object then null;
+end $$;
+
+-- The live table was created from an earlier version of this file without
+-- size/ice/sweet/unit_price, and `create table if not exists` never adds
+-- missing columns. Found 2026-11-24: order inserts worked but order_items
+-- inserts failed with PGRST204 "Could not find the 'ice' column ... in the
+-- schema cache". These ALTERs heal a table created from the old version.
+alter table public.order_items add column if not exists size text not null default 'Regular';
+alter table public.order_items add column if not exists ice text not null default 'Normal Ice';
+alter table public.order_items add column if not exists sweet text not null default 'Less Sweet';
+alter table public.order_items add column if not exists unit_price numeric(10, 2) not null default 0;
+notify pgrst, 'reload schema';
+
+-- The live table also carried a leftover `drink_id` column (NOT NULL) from
+-- the very first version of the schema, which no code anywhere sends.
+-- Found 2026-11-24: after adding the four missing columns, item inserts
+-- still failed with 23502 "null value in column drink_id violates
+-- not-null constraint". Nothing references drink_id, so drop it.
+alter table public.order_items drop column if exists drink_id;
+-- The live table ALSO carried leftover `price`, `line_total` and `options`
+-- columns (all NOT NULL, no default) from that first version. Neither the
+-- mobile app nor the web app sends them (both send name/size/ice/sweet/
+-- qty/unit_price), so every item insert failed on them. Drop them too.
+alter table public.order_items drop column if exists price;
+alter table public.order_items drop column if exists line_total;
+alter table public.order_items drop column if exists options;
+notify pgrst, 'reload schema';
 
 create index if not exists order_items_order_id_idx on order_items (order_id);
 create index if not exists orders_created_at_idx on orders (created_at desc);
@@ -99,6 +139,17 @@ create policy "anon can insert order items" on order_items
 drop policy if exists "anon can read order items" on order_items;
 create policy "anon can read order items" on order_items
   for select to anon using (true);
+
+-- ---------- Table privileges ----------
+-- RLS policies alone are not enough: the anon role also needs table-level
+-- grants, otherwise every call fails with "permission denied for table"
+-- (Postgres error 42501). Found 2026-11-24 when the first real test order
+-- failed with "Could not place order".
+grant select on public.stores to anon;
+grant select on public.drinks to anon;
+grant select on public.vouchers to anon;
+grant select, insert, update on public.orders to anon;
+grant select, insert on public.order_items to anon;
 
 -- ---------- Seed data ----------
 
