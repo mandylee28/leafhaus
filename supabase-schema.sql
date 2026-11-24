@@ -102,13 +102,13 @@ create policy "anon can read order items" on order_items
 
 -- ---------- Seed data ----------
 
-insert into stores (id, name) values
+insert into stores (id, name) overriding system value values
   (1, 'Leafhaus MY Horizon Mall'),
   (2, 'Leafhaus MY Eco Botanic'),
   (3, 'Leafhaus MY Aeon Bukit Indah')
 on conflict (id) do nothing;
 
-insert into drinks (id, name, price, category, description, color, bg) values
+insert into drinks (id, name, price, category, description, color, bg) overriding system value values
   (1, 'Jasmine Matcha Pure Tea', 11.90, 'Matcha', 'Jasmine green tea with matcha', '#7a9b57', '#eef3e4'),
   (2, 'Jasmine Green Milk Tea', 12.90, 'Milk Tea', 'Jasmine green tea, fresh milk', '#b9c98a', '#f2f4e2'),
   (3, 'Brown Sugar Pearl Milk Tea', 13.90, 'Milk Tea', 'Brown sugar pearls, milk tea', '#8a5a33', '#f3e7d8'),
